@@ -1,0 +1,5 @@
+streamlit
+pandas
+python-docx
+scikit-learn
+bertopic
