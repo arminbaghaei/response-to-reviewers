@@ -1,73 +1,77 @@
 import streamlit as st
-import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
+from docx import Document
+from docx.shared import Pt
 from io import BytesIO
 
-# Optional: BERTopic
-try:
-    from bertopic import BERTopic
-    BER_TOPIC_AVAILABLE = True
-except ImportError:
-    BER_TOPIC_AVAILABLE = False
+st.set_page_config(page_title="📝 Response to Reviewers Tool", layout="wide")
+st.title("📝 Response to Reviewers Generator")
 
-st.set_page_config(page_title="Response to Reviewers", layout="wide")
+st.markdown("Fill in the details and generate a response document for your reviewers.")
 
-st.title("📝 Response to Reviewers")
-st.markdown("This tool helps researchers generate structured and well-formatted responses to peer reviewer comments.")
-
-def cluster_texts(texts, n_clusters=5):
-    vectorizer = TfidfVectorizer(stop_words='english', max_df=0.8)
-    X = vectorizer.fit_transform(texts)
-    km = KMeans(n_clusters=n_clusters, random_state=42)
-    km.fit(X)
-    top_terms = []
-    order_centroids = km.cluster_centers_.argsort()[:, ::-1]
-    terms = vectorizer.get_feature_names_out()
-    for i in range(n_clusters):
-        cluster_keywords = [terms[ind] for ind in order_centroids[i, :5]]
-        top_terms.append(", ".join(cluster_keywords))
-    return top_terms
-
-def run_bertopic(texts):
-    if not BER_TOPIC_AVAILABLE:
-        return "BERTopic not available. Install it with: pip install bertopic", None
-    model = BERTopic()
-    topics, probs = model.fit_transform(texts)
-    topic_df = model.get_topic_info()
-    return None, topic_df
-
-query = st.text_input("🔍 Enter your manuscript topic or keywords")
-
-if query and st.button("Run Reviewer Assistance"):
-    st.info("Fetching abstracts...")
-
-    docs = [
-        "This study proposes a novel response structure to address peer reviewer feedback in structured journals.",
-        "The manuscript evaluation emphasizes clarity, grammar, and logical coherence across responses.",
-        "Reviewers often seek clarity on the statistical methods used in clinical studies.",
-        "Authors must explicitly indicate the changes made to the revised manuscript."
-    ]
-
-    st.subheader("📊 Reviewer Topic Clusters (TF-IDF + KMeans)")
-    top_terms = cluster_texts(docs)
-    for i, terms in enumerate(top_terms):
-        st.markdown(f"**Cluster {i+1}**: {terms}")
-
-    st.subheader("📚 Advanced Topic Modeling (BERTopic)")
-    err, topic_df = run_bertopic(docs)
-    if err:
-        st.warning(err)
-    else:
-        st.dataframe(topic_df)
-
-    if top_terms:
-        suggestion = (
-            f"While reviewer focus includes terms like **{top_terms[0]}**, "
-            f"it is important to address underrepresented aspects more thoroughly."
-        )
-        st.subheader("🧭 Suggested Reviewer Response Focus")
-        st.markdown(suggestion)
+# Manuscript info
+journal_name = st.text_input("Journal's Name")
+manuscript_id = st.text_input("Manuscript ID")
+manuscript_title = st.text_input("Manuscript Title")
 
 st.markdown("---")
-st.markdown("Developed by **Abdollah Baghaei Daemei** – [ResearchMate.org](https://www.researchmate.org)")
+
+# Initialize session state for reviewers
+if "reviewers" not in st.session_state:
+    st.session_state.reviewers = [{"id": 1, "comments": [{"comment": "", "response": ""}]}]
+
+def add_reviewer():
+    st.session_state.reviewers.append({
+        "id": len(st.session_state.reviewers) + 1,
+        "comments": [{"comment": "", "response": ""}]
+    })
+
+def add_comment(reviewer_index):
+    st.session_state.reviewers[reviewer_index]["comments"].append({"comment": "", "response": ""})
+
+# Input sections for reviewers
+for i, reviewer in enumerate(st.session_state.reviewers):
+    st.subheader(f"Reviewer {reviewer['id']}")
+    for j, comment_pair in enumerate(reviewer["comments"]):
+        comment = st.text_area(f"Comment {j + 1}", key=f"comment_{i}_{j}")
+        response = st.text_area(f"Response {j + 1}", key=f"response_{i}_{j}")
+        reviewer["comments"][j]["comment"] = comment
+        reviewer["comments"][j]["response"] = response
+    st.button("➕ Add another comment", on_click=add_comment, args=(i,), key=f"add_comment_{i}")
+    st.markdown("---")
+
+st.button("➕ Add Reviewer", on_click=add_reviewer)
+
+# Generate Word file
+def generate_docx():
+    doc = Document()
+    doc.add_heading(journal_name or "Journal Name", level=1)
+    doc.add_paragraph(f"Manuscript ID: {manuscript_id}")
+    doc.add_paragraph(f"Manuscript Title: {manuscript_title}")
+    doc.add_paragraph(
+        "We would like to thank you for your valuable time and insightful comments to improve the quality of this manuscript. "
+        "We have now addressed these comments and revised the manuscript thoroughly. Please see our detailed responses and revisions below.\n\nThanks,\nAuthors"
+    )
+
+    for reviewer in st.session_state.reviewers:
+        doc.add_heading(f"Reviewer {reviewer['id']}", level=2)
+        for idx, comment_data in enumerate(reviewer["comments"], 1):
+            doc.add_paragraph(f"Comment {idx}:", style='List Number')
+            comment_para = doc.add_paragraph(comment_data['comment'])
+            comment_para.paragraph_format.left_indent = Pt(20)
+            doc.add_paragraph("Response:", style='List Number')
+            response_para = doc.add_paragraph(comment_data['response'])
+            response_para.paragraph_format.left_indent = Pt(20)
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+if st.button("📄 Generate Word File"):
+    buffer = generate_docx()
+    st.download_button(
+        label="📥 Download Response_to_Reviewers.docx",
+        data=buffer,
+        file_name="Response_to_Reviewers.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
